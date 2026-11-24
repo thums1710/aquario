@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#050b14">
+<title>Aquário</title>
+<style>
+  html,body{margin:0;height:100%;background:#050b14;overflow:hidden;touch-action:manipulation;
+    -webkit-user-select:none;user-select:none;font-family:ui-monospace,Menlo,Consolas,monospace}
+  canvas{display:block;width:100vw;height:100vh;height:100dvh}
+  #start{position:fixed;inset:0;display:flex;flex-direction:column;gap:18px;align-items:center;justify-content:center;
+    background:#050b14ee;color:#7fe9ff;text-align:center;z-index:5}
+  #start h1{margin:0;font-size:22px;text-shadow:0 0 12px #3cf}
+  #start p{margin:0;color:#7fe9ffaa;font-size:14px;max-width:260px}
+  button{font:inherit;color:#7fe9ff;background:#0a2233;border:1px solid #3cf8;border-radius:10px;
+    padding:12px 22px;font-size:16px;box-shadow:0 0 14px #3cf4}
+  #gear{position:fixed;right:10px;bottom:10px;z-index:4;padding:6px 10px;font-size:14px;opacity:.5}
+  #panel{position:fixed;left:0;right:0;bottom:0;z-index:6;background:#06121f;border-top:1px solid #3cf6;
+    color:#7fe9ff;padding:14px;display:none;flex-direction:column;gap:10px;font-size:14px}
+  #panel label{display:flex;justify-content:space-between;align-items:center;gap:10px}
+  #panel input,#panel select{font:inherit;color:#7fe9ff;background:#0a2233;border:1px solid #3cf6;border-radius:6px;padding:6px;width:55%}
+  #panel input[type=range]{padding:0}
+  #link{word-break:break-all;color:#9ff;font-size:12px}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="start">
+  <h1>&gt;&lt;(((o&gt; aquário</h1>
+  <p id="hello">Seu peixe está esperando.</p>
+  <button id="enter">entrar no aquário</button>
+</div>
+
+<button id="gear">⚙</button>
+<div id="panel">
+  <label>nome <input id="pn" maxlength="14" value="Nemo"></label>
+  <label>cor <input id="ph" type="range" min="0" max="360" value="190"></label>
+  <label>tamanho <input id="ps" type="range" min="0.7" max="1.8" step="0.1" value="1"></label>
+  <label>tipo <select id="pt"><option value="0">&gt;&lt;(((o&gt;</option><option value="1">&gt;&lt;((°&gt;</option><option value="2">&gt;&lt;&gt;</option></select></label>
+  <div id="link"></div>
+  <div style="display:flex;gap:10px"><button id="copy">copiar link</button><button id="close">fechar</button></div>
+</div>
+
+<script>
+(() => {
+  // ---------- peixe vindo da URL: ?n=Nemo&h=190&s=1&t=0 ----------
+  const q = new URLSearchParams(location.search);
+  const num = (k, d, lo, hi) => { const v = parseFloat(q.get(k)); return isNaN(v) ? d : Math.min(hi, Math.max(lo, v)); };
+  const cfg = {
+    n: (q.get('n') || 'Peixinho').slice(0, 14),
+    h: num('h', 190, 0, 360),
+    s: num('s', 1, 0.7, 1.8),
+    t: Math.round(num('t', 0, 0, 2)),
+  };
+  const BODY = [['><(((o>', '<o)))><'], ['><((°>', '<°))><'], ['><>', '<><']];
+  document.getElementById('hello').textContent = cfg.n + ' está esperando por você.';
+
+  const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+  let W, H, DPR;
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = innerWidth; H = innerHeight;
+    cv.width = W * DPR; cv.height = H * DPR;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  addEventListener('resize', resize); resize();
+
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const col = (l, a = 1) => `hsla(${cfg.h},100%,${l}%,${a})`;
+
+  // ---------- estado ----------
+  const fish = { x: W / 2, y: H * 0.5, vx: 40, vy: 0, dir: 1, tx: W / 2, ty: H * 0.5, wait: 0,
+                 spin: 0, say: '', sayT: 0, scare: 0, eatT: 0 };
+  let food = [], bubbles = [], pops = [];
+  const weeds = Array.from({ length: 6 }, (_, i) => ({ x: (i + 0.5) / 6, h: rand(50, 110), p: rand(0, 6) }));
+
+  const FS = () => 30 * cfg.s;             // tamanho da fonte do peixe
+  const waterTop = () => H * 0.12;
+  const floor = () => H * 0.92;
+
+  function spawnBubble(x, y, r) { bubbles.push({ x, y, r: r || rand(2, 6), vy: rand(30, 70), p: rand(0, 6) }); }
+  function say(t, s = 1.6) { fish.say = t; fish.sayT = s; }
+
+  function drop(x, y) {
+    for (let i = 0; i < 7; i++) food.push({ x: x + rand(-22, 22), y: y + rand(-8, 8), vy: rand(25, 50), a: 1 });
+  }
+
+  // ---------- interação ----------
+  function hitFish(x, y) {
+    const w = FS() * 4.2;
+    return Math.abs(x - fish.x) < w / 2 + 10 && Math.abs(y - fish.y) < FS();
+  }
+  function onTap(x, y) {
+    if (hitFish(x, y)) {
+      fish.spin = 1; say(Math.random() < 0.5 ? cfg.n + '!' : '*blub*');
+      for (let i = 0; i < 6; i++) spawnBubble(fish.x + rand(-10, 10), fish.y - 10);
+    } else if (y < waterTop() + H * 0.18) {
+      drop(x, waterTop() + 6);
+      say('comida?', 1.2);
+    } else {
+      // peixe vira para olhar o toque
+      fish.tx = x; fish.ty = y; fish.wait = 0;
+    }
+  }
+  cv.addEventListener('pointerdown', e => { if (started) onTap(e.clientX, e.clientY); });
+
+  function scare() {
+    fish.scare = 2.2; say('!!!', 1.5);
+    fish.vx = (Math.random() < 0.5 ? -1 : 1) * 380; fish.vy = rand(-120, 120);
+    for (let i = 0; i < 28; i++) spawnBubble(fish.x + rand(-40, 40), fish.y + rand(-20, 20), rand(2, 8));
+    if (navigator.vibrate) navigator.vibrate(60);
+  }
+
+  // chacoalhar
+  let lastShake = 0;
+  function onMotion(e) {
+    const a = e.accelerationIncludingGravity; if (!a) return;
+    const m = Math.hypot(a.x || 0, a.y || 0, a.z || 0);
+    const now = performance.now();
+    if (Math.abs(m - 9.8) > 14 && now - lastShake > 1500) { lastShake = now; scare(); }
+  }
+  addEventListener('keydown', e => { if (e.code === 'Space') scare(); }); // teste no desktop
+
+  // ---------- início (permissão do iPhone exige um toque) ----------
+  let started = false;
+  document.getElementById('enter').onclick = async () => {
+    try {
+      if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        const r = await DeviceMotionEvent.requestPermission();
+        if (r === 'granted') addEventListener('devicemotion', onMotion);
+      } else addEventListener('devicemotion', onMotion);
+    } catch (_) {}
+    document.getElementById('start').style.display = 'none';
+    started = true;
+    say('oi!', 2);
+  };
+
+  // ---------- lógica ----------
+  function update(dt) {
+    // bolhas
+    for (const b of bubbles) { b.y -= b.vy * dt; b.p += dt * 3; b.x += Math.sin(b.p) * 0.3; }
+    bubbles = bubbles.filter(b => b.y > waterTop());
+    if (Math.random() < dt * 1.2) spawnBubble(rand(0.1, 0.9) * W, floor());
+
+    // comida
+    for (const f of food) { f.y += f.vy * dt; if (f.y > floor()) f.a -= dt * 0.5; }
+    food = food.filter(f => f.a > 0);
+
+    // peixe: escolhe alvo
+    if (fish.scare > 0) fish.scare -= dt;
+    const nearest = food.reduce((b, f) => (!b || Math.hypot(f.x - fish.x, f.y - fish.y) < Math.hypot(b.x - fish.x, b.y - fish.y)) ? f : b, null);
+    if (nearest && fish.scare <= 0) { fish.tx = nearest.x; fish.ty = nearest.y; fish.wait = 0; }
+    else if ((fish.wait -= dt) <= 0 || Math.hypot(fish.tx - fish.x, fish.ty - fish.y) < 20) {
+      fish.tx = rand(FS() * 2.5, W - FS() * 2.5);
+      fish.ty = rand(waterTop() + 40, floor() - 70);
+      fish.wait = rand(2, 5);
+    }
+    const sp = fish.scare > 0 ? 260 : nearest ? 130 : 60;
+    const dx = fish.tx - fish.x, dy = fish.ty - fish.y, d = Math.hypot(dx, dy) || 1;
+    fish.vx += ((dx / d) * sp - fish.vx) * Math.min(1, dt * 2.5);
+    fish.vy += ((dy / d) * sp - fish.vy) * Math.min(1, dt * 2.5);
+    fish.x += fish.vx * dt; fish.y += fish.vy * dt;
+    fish.x = Math.min(W - 20, Math.max(20, fish.x));
+    fish.y = Math.min(floor() - 30, Math.max(waterTop() + 20, fish.y));
+    if (Math.abs(fish.vx) > 12) fish.dir = fish.vx > 0 ? 1 : -1;
+
+    // comer
+    const mouthX = fish.x + fish.dir * FS() * 1.7;
+    for (const f of food) if (f.a > 0.9 && Math.hypot(f.x - mouthX, f.y - fish.y) < FS() * 0.9) {
+      f.a = 0; fish.eatT = 0.4;
+      if (Math.random() < 0.5) say(['*crunch*', '*nhac*', '*munch*', '*chomp*'][Math.floor(Math.random() * 4)], 0.8);
+      spawnBubble(mouthX, fish.y - 6, 3);
+    }
+
+    if (fish.spin > 0) fish.spin = Math.max(0, fish.spin - dt * 1.4);
+    if (fish.sayT > 0) fish.sayT -= dt;
+    if (fish.eatT > 0) fish.eatT -= dt;
+  }
+
+  // ---------- desenho ----------
+  function glow(color, blur) { ctx.shadowColor = color; ctx.shadowBlur = blur; }
+
+  function draw(t) {
+    ctx.clearRect(0, 0, W, H);
+
+    // fundo
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#07182a'); g.addColorStop(1, '#030810');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+
+    // superfície
+    ctx.strokeStyle = col(60, 0.55); ctx.lineWidth = 2; glow(col(60), 10);
+    ctx.beginPath();
+    for (let x = 0; x <= W; x += 8) {
+      const y = waterTop() + Math.sin(x * 0.03 + t * 1.6) * 3;
+      x ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.stroke();
+
+    // algas
+    ctx.lineWidth = 3; ctx.strokeStyle = 'hsla(140,100%,60%,.8)'; glow('hsl(140,100%,55%)', 8);
+    for (const w of weeds) {
+      ctx.beginPath();
+      const bx = w.x * W, by = floor();
+      for (let i = 0; i <= 10; i++) {
+        const k = i / 10, x = bx + Math.sin(t * 1.4 + w.p + k * 3) * 10 * k, y = by - w.h * k;
+        i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+      }
+      ctx.stroke();
+    }
+    // chão
+    ctx.strokeStyle = 'hsla(190,60%,40%,.35)'; glow('transparent', 0); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, floor() + 4); ctx.lineTo(W, floor() + 4); ctx.stroke();
+
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+
+    // comida (amarelo, como no vídeo)
+    ctx.fillStyle = 'hsl(45,100%,60%)'; glow('hsl(45,100%,55%)', 8);
+    ctx.font = '14px ui-monospace,Menlo,Consolas,monospace';
+    for (const f of food) { ctx.globalAlpha = Math.max(0, f.a); ctx.fillText(Math.random() < 0.002 ? '*' : '°', f.x, f.y); }
+    ctx.globalAlpha = 1;
+
+    // bolhas
+    ctx.lineWidth = 1.5; ctx.strokeStyle = col(65, 0.9); glow(col(65), 8);
+    for (const b of bubbles) { ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, 6.283); ctx.stroke(); }
+
+    // peixe
+    const body = BODY[cfg.t][fish.dir > 0 ? 0 : 1];
+    ctx.save();
+    ctx.translate(fish.x, fish.y + Math.sin(t * 3) * 3);
+    if (fish.spin > 0) ctx.rotate(fish.spin * 6.283);
+    ctx.font = `bold ${FS()}px ui-monospace,Menlo,Consolas,monospace`;
+    ctx.fillStyle = col(62); glow(col(60), 16);
+    const wob = Math.sin(t * 9) * 0.04 * (fish.scare > 0 ? 3 : 1);
+    ctx.rotate(wob);
+    ctx.fillText(fish.eatT > 0 ? body.replace(/o|°/, 'O') : body, 0, 0);
+    ctx.restore();
+
+    // fala
+    if (fish.sayT > 0) {
+      ctx.globalAlpha = Math.min(1, fish.sayT * 2);
+      ctx.font = '15px ui-monospace,Menlo,Consolas,monospace';
+      ctx.fillStyle = col(85); glow(col(70), 10);
+      ctx.fillText(fish.say, fish.x, fish.y - FS() * 1.2);
+      ctx.globalAlpha = 1;
+    }
+    glow('transparent', 0);
+
+    // dica
+    if (started && t < 8) {
+      ctx.globalAlpha = Math.max(0, 1 - t / 8) * 0.7;
+      ctx.fillStyle = col(75); ctx.font = '13px ui-monospace,Menlo,Consolas,monospace';
+      ctx.fillText('toque no topo: comida · toque no peixe · chacoalhe', W / 2, H - 22);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  let last = performance.now(), t0 = last;
+  function loop(now) {
+    const dt = Math.min(0.05, (now - last) / 1000); last = now;
+    update(dt); draw((now - t0) / 1000);
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  // ---------- painel para gerar o link do NFC ----------
+  const $ = id => document.getElementById(id);
+  const panel = $('panel');
+  function buildLink() {
+    const p = new URLSearchParams({ n: $('pn').value || 'Peixinho', h: $('ph').value, s: $('ps').value, t: $('pt').value });
+    const url = location.origin + location.pathname + '?' + p.toString();
+    $('link').textContent = url; return url;
+  }
+  ['pn', 'ph', 'ps', 'pt'].forEach(id => $(id).addEventListener('input', buildLink));
+  $('gear').onclick = e => { e.stopPropagation(); $('pn').value = cfg.n; $('ph').value = cfg.h; $('ps').value = cfg.s; $('pt').value = cfg.t; buildLink(); panel.style.display = 'flex'; };
+  $('close').onclick = () => panel.style.display = 'none';
+  $('copy').onclick = async () => { try { await navigator.clipboard.writeText(buildLink()); $('copy').textContent = 'copiado!'; setTimeout(() => $('copy').textContent = 'copiar link', 1500); } catch (_) {} };
+  panel.addEventListener('pointerdown', e => e.stopPropagation());
+  $('gear').addEventListener('pointerdown', e => e.stopPropagation());
+})();
+</script>
+</body>
+</html>
